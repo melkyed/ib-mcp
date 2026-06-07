@@ -30,7 +30,7 @@ include = ["ib_mcp/py.typed"]
 ib-mcp-server = "ib_mcp.server:main"
 
 [tool.poetry.dependencies]
-python = ">=3.12,<4.0"
+python = ">=3.12,<3.14"
 # Core runtime deps
 ib_async = "^2.0.1"
 fastmcp = ">=3.0.0"

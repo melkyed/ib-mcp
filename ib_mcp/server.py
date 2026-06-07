@@ -796,6 +796,8 @@ class IBMCPServer:
         self.get_fundamental_data = get_fundamental_data  # type: ignore[attr-defined]
         self.get_account_summary = get_account_summary  # type: ignore[attr-defined]
         self.get_positions = get_positions  # type: ignore[attr-defined]
+        self.get_executions = get_executions  # type: ignore[attr-defined]
+        self.get_open_orders = get_open_orders  # type: ignore[attr-defined]
         self.get_contract_details = get_contract_details  # type: ignore[attr-defined]
 
     def run(

@@ -86,8 +86,8 @@ The default mode runs as a spawnable MCP server communicating via standard input
 # Using default settings (TWS on localhost:7497)
 poetry run ib-mcp-server
 
-# Custom IB Gateway connection
-poetry run ib-mcp-server --host 127.0.0.1 --port 4001 --client-id 1
+# Explicit paper TWS connection
+poetry run ib-mcp-server --host 127.0.0.1 --port 7497 --client-id 1
 
 # Help with all options
 poetry run ib-mcp-server --help
@@ -114,7 +114,7 @@ IB_MCP_TRANSPORT=http IB_MCP_HTTP_HOST=127.0.0.1 IB_MCP_HTTP_PORT=8000 poetry ru
 
 #### IB Connection
 - `--host`: IB Gateway/TWS host (default: 127.0.0.1)
-- `--port`: IB Gateway/TWS port (default: 7497 for TWS, use 4001 for Gateway)
+- `--port`: IB Gateway/TWS port (default: 7497 for paper TWS; live ports 7496/4001 are blocked unless IBKR_ALLOW_LIVE=1)
 - `--client-id`: Unique client ID for the connection (default: 1)
 
 #### Transport Configuration
