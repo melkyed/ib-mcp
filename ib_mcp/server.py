@@ -95,7 +95,7 @@ class IBMCPServer:
     """Interactive Brokers MCP Server (FastMCP edition)."""
 
     def __init__(
-        self, host: str = "127.0.0.1", port: int = 4002, client_id: int = 1
+        self, host: str = "127.0.0.1", port: int = 7497, client_id: int = 1
     ) -> None:
         self.server = FastMCP(
             name="IBKR MCP Server",
@@ -111,6 +111,13 @@ class IBMCPServer:
         # this account only (defense-in-depth against reading other accounts).
         self.account_filter: str = os.environ.get("IBKR_ACCOUNT", "").strip()
 
+        # Confirm which env vars were inherited from the (Windows) system env.
+        logger.info(
+            f"IBKR MCP starting — port: {port}, "
+            f"account scope: {os.environ.get('IBKR_ACCOUNT', 'all accounts')}, "
+            f"live ports allowed: {os.environ.get('IBKR_ALLOW_LIVE', 'NO')}"
+        )
+
         # Register FastMCP tools
         self._register_handlers()
 
@@ -122,12 +129,12 @@ class IBMCPServer:
                 return
             # Security guard: refuse the known live-trading ports unless the
             # operator explicitly opts in. This is a read-only monitor meant
-            # for the paper Gateway (port 4002).
+            # for paper TWS (port 7497).
             live_ports = {7496, 4001}
             if self.port in live_ports and os.environ.get("IBKR_ALLOW_LIVE") != "1":
                 raise ConnectionError(
                     f"Refusing to connect on live-trading port {self.port}. This is "
-                    "a read-only monitor intended for the paper Gateway (port 4002). "
+                    "a read-only monitor intended for paper TWS (port 7497). "
                     "To connect to a live account anyway, set IBKR_ALLOW_LIVE=1 in "
                     "the environment."
                 )
@@ -672,23 +679,33 @@ class IBMCPServer:
             account: Annotated[str, "Filter by account (empty for all)"] = "",
         ) -> str:
             await _ensure_connected()
+            # Honor IBKR_ACCOUNT scoping from the system environment.
             account = self.account_filter or account
             try:
-                # reqAllOpenOrders pulls orders placed by other clients/TWS too
-                # (e.g. your TradingView pipeline), then openTrades() gives Trade
-                # objects with status.
-                await self.ib.reqAllOpenOrdersAsync()
-                trades = self.ib.openTrades()
+                # Step 1: request this client's orders.
+                await self.ib.reqOpenOrdersAsync()
+                trades = self.ib.trades()
+
+                # Step 2: if empty, fall back to all open orders (other
+                # clients/TWS, e.g. your TradingView pipeline).
+                if not trades:
+                    await self.ib.reqAllOpenOrdersAsync()
+                    trades = self.ib.openTrades()
+
                 rows = []
                 for t in trades:
                     order = getattr(t, "order", None)
                     status = getattr(t, "orderStatus", None)
+                    contract = getattr(t, "contract", None)
                     acct = getattr(order, "account", "")
+
+                    # Apply account filter (IBKR_ACCOUNT env or the tool arg).
                     if account and acct != account:
                         continue
+
                     rows.append([
                         _format_position_value(acct),
-                        _format_position_value(getattr(getattr(t, "contract", None), "symbol", "")),
+                        _format_position_value(getattr(contract, "symbol", "")),
                         _format_position_value(getattr(order, "action", "")),
                         _format_position_value(getattr(order, "orderType", "")),
                         _format_position_value(getattr(order, "totalQuantity", "")),
@@ -699,10 +716,13 @@ class IBMCPServer:
                         _format_position_value(getattr(status, "remaining", "")),
                         _format_position_value(getattr(order, "orderId", "")),
                     ])
+
                 if not rows:
                     return f"No open orders found{f' for {account}' if account else ''}"
-                headers = ["Account", "Symbol", "Action", "Type", "Qty", "LmtPrice",
-                           "AuxPrice", "Status", "Filled", "Remaining", "OrderId"]
+
+                headers = ["Account", "Symbol", "Action", "Type", "Qty",
+                           "LmtPrice", "AuxPrice", "Status", "Filled",
+                           "Remaining", "OrderId"]
                 return "# Open Orders\n\n" + _format_markdown_table(headers, rows)
             except Exception as e:  # pragma: no cover
                 return f"Error getting open orders: {e}"
@@ -832,8 +852,8 @@ def main() -> None:
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("IB_PORT", "4002")),
-        help="IB Gateway/TWS port, default 4002 = paper Gateway (env: IB_PORT)",
+        default=int(os.getenv("IB_PORT", "7497")),
+        help="IB Gateway/TWS port, default 7497 = paper TWS (env: IB_PORT)",
     )
     parser.add_argument(
         "--client-id",

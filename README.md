@@ -13,7 +13,7 @@ This directory contains an MCP (Model Context Protocol) server that wraps the ib
 This fork is configured for **read-only, paper-first** use. Hardening applied on the `mel-hardened` branch:
 
 - **Read-only is enforced at the API session.** The connection always passes `readonly=True` to `ib_async`, which blocks all order entry (place/modify/cancel) at the IBKR session level, not just by omitting order tools. This is intentionally **not configurable** in code.
-- **Paper Gateway by default.** The default port is `4002` (IBKR paper-trading Gateway). The old defaults (`7496`/`7497`) are no longer used.
+- **Paper TWS by default.** The default port is `7497` (IBKR paper-trading TWS). The live default `7496` is no longer used.
 - **Live-port guard.** The server refuses to connect on the known live-trading ports (`7496` TWS, `4001` Gateway) and raises a clear error, unless `IBKR_ALLOW_LIVE=1` is explicitly set in the environment.
 - **Account scoping.** If `IBKR_ACCOUNT` is set, every account-scoped tool (`get_account_summary`, `get_positions`, `get_executions`, `get_open_orders`) is restricted to that account only.
 - **Localhost only.** Connect to a Gateway/TWS on `127.0.0.1`; never expose the IBKR socket port off localhost. The IBKR API socket has no authentication of its own.
@@ -21,7 +21,7 @@ This fork is configured for **read-only, paper-first** use. Hardening applied on
 
 | Env var | Effect | Default |
 |---------|--------|---------|
-| `IB_PORT` | Gateway/TWS port | `4002` (paper) |
+| `IB_PORT` | Gateway/TWS port | `7497` (paper TWS) |
 | `IBKR_ALLOW_LIVE` | Set to `1` to permit connecting on live ports `7496`/`4001` | unset (live blocked) |
 | `IBKR_ACCOUNT` | Restrict all account data to this account id | unset (all accounts) |
 
@@ -61,7 +61,7 @@ The MCP server provides the following tools for LLM interaction:
 3. **API Configuration**:
    - Enable API access in TWS/Gateway: `Configure → API → Settings` and check "Enable ActiveX and Socket Clients"
    - Also check "Read-Only API" as a secondary guardrail (see Security section)
-   - This fork defaults to port `4002` (paper Gateway). IBKR's own port conventions: 7497 paper TWS, 7496 live TWS, 4002 paper Gateway, 4001 live Gateway
+   - This fork defaults to port `7497` (paper TWS). The live ports `7496` (TWS) and `4001` (Gateway) are blocked unless `IBKR_ALLOW_LIVE=1`
    - Add `127.0.0.1` to trusted IPs if connecting locally
 
 ## Installation
