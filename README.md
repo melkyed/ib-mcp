@@ -8,6 +8,23 @@ Lightweight Model Context Protocol (MCP) server exposing read-only Interactive B
 
 This directory contains an MCP (Model Context Protocol) server that wraps the ib_async library to allow LLMs to interact with Interactive Brokers data.
 
+## Security (mel-hardened fork)
+
+This fork is configured for **read-only, paper-first** use. Hardening applied on the `mel-hardened` branch:
+
+- **Read-only is enforced at the API session.** The connection always passes `readonly=True` to `ib_async`, which blocks all order entry (place/modify/cancel) at the IBKR session level, not just by omitting order tools. This is intentionally **not configurable** in code.
+- **Paper Gateway by default.** The default port is `4002` (IBKR paper-trading Gateway). The old defaults (`7496`/`7497`) are no longer used.
+- **Live-port guard.** The server refuses to connect on the known live-trading ports (`7496` TWS, `4001` Gateway) and raises a clear error, unless `IBKR_ALLOW_LIVE=1` is explicitly set in the environment.
+- **Account scoping.** If `IBKR_ACCOUNT` is set, every account-scoped tool (`get_account_summary`, `get_positions`, `get_executions`, `get_open_orders`) is restricted to that account only.
+- **Localhost only.** Connect to a Gateway/TWS on `127.0.0.1`; never expose the IBKR socket port off localhost. The IBKR API socket has no authentication of its own.
+- **Belt-and-suspenders.** As a secondary guardrail, also enable IBKR's account-level "Read-Only API" setting in Gateway/TWS (`Configure → API → Settings`).
+
+| Env var | Effect | Default |
+|---------|--------|---------|
+| `IB_PORT` | Gateway/TWS port | `4002` (paper) |
+| `IBKR_ALLOW_LIVE` | Set to `1` to permit connecting on live ports `7496`/`4001` | unset (live blocked) |
+| `IBKR_ACCOUNT` | Restrict all account data to this account id | unset (all accounts) |
+
 ## Features
 
 The MCP server provides the following tools for LLM interaction:
@@ -30,6 +47,8 @@ The MCP server provides the following tools for LLM interaction:
 - **get_portfolio**: Retrieve portfolio positions and details
 - **get_account_summary**: Retrieve account summary information
 - **get_positions**: Retrieve current positions with contract metadata, including option expiry/strike/right/multiplier fields
+- **get_executions**: Retrieve recent executions/fills for the current trading day (added in the `mel-hardened` fork)
+- **get_open_orders**: Retrieve current open orders across all clients, with status/filled/remaining (added in the `mel-hardened` fork)
 
 ## Prerequisites
 
@@ -41,7 +60,8 @@ The MCP server provides the following tools for LLM interaction:
 
 3. **API Configuration**:
    - Enable API access in TWS/Gateway: `Configure → API → Settings` and check "Enable ActiveX and Socket Clients"
-   - Set appropriate port (default: 7497 for TWS, 4001 for Gateway)
+   - Also check "Read-Only API" as a secondary guardrail (see Security section)
+   - This fork defaults to port `4002` (paper Gateway). IBKR's own port conventions: 7497 paper TWS, 7496 live TWS, 4002 paper Gateway, 4001 live Gateway
    - Add `127.0.0.1` to trusted IPs if connecting locally
 
 ## Installation

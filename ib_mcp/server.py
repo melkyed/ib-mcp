@@ -7,6 +7,7 @@ for simpler registration and JSON-schema generation from type hints.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Annotated, Any
 
 import defusedxml.ElementTree as ET
@@ -94,7 +95,7 @@ class IBMCPServer:
     """Interactive Brokers MCP Server (FastMCP edition)."""
 
     def __init__(
-        self, host: str = "127.0.0.1", port: int = 7496, client_id: int = 1
+        self, host: str = "127.0.0.1", port: int = 4002, client_id: int = 1
     ) -> None:
         self.server = FastMCP(
             name="IBKR MCP Server",
@@ -106,6 +107,9 @@ class IBMCPServer:
         self.client_id = client_id
         self.connected = False
         self.news_provider_codes: str = ""
+        # If IBKR_ACCOUNT is set, every account-scoped tool is restricted to
+        # this account only (defense-in-depth against reading other accounts).
+        self.account_filter: str = os.environ.get("IBKR_ACCOUNT", "").strip()
 
         # Register FastMCP tools
         self._register_handlers()
@@ -116,7 +120,20 @@ class IBMCPServer:
         async def _ensure_connected() -> None:
             if self.connected:
                 return
+            # Security guard: refuse the known live-trading ports unless the
+            # operator explicitly opts in. This is a read-only monitor meant
+            # for the paper Gateway (port 4002).
+            live_ports = {7496, 4001}
+            if self.port in live_ports and os.environ.get("IBKR_ALLOW_LIVE") != "1":
+                raise ConnectionError(
+                    f"Refusing to connect on live-trading port {self.port}. This is "
+                    "a read-only monitor intended for the paper Gateway (port 4002). "
+                    "To connect to a live account anyway, set IBKR_ALLOW_LIVE=1 in "
+                    "the environment."
+                )
             try:
+                # readonly=True blocks ALL order entry at the API session level.
+                # DO NOT make this configurable.
                 await self.ib.connectAsync(
                     self.host, self.port, self.client_id, readonly=True
                 )
@@ -562,6 +579,7 @@ class IBMCPServer:
             account: Annotated[str, "Account name (empty for all accounts)"] = "",
         ) -> str:
             await _ensure_connected()
+            account = self.account_filter or account
             try:
                 vals = await self.ib.accountSummaryAsync(account)
                 if not vals:
@@ -594,14 +612,100 @@ class IBMCPServer:
             account: Annotated[str, "Account name (empty for all accounts)"] = "",
         ) -> str:
             await _ensure_connected()
+            account = self.account_filter or account
             try:
                 positions = self.ib.positions(account)
+                if account:
+                    positions = [
+                        p for p in positions
+                        if getattr(p, "account", "") == account
+                    ]
                 if not positions:
                     return "No positions found"
 
                 return _format_positions_markdown(positions, account)
             except Exception as e:  # pragma: no cover
                 return f"Error getting positions: {e}"
+
+        @self.server.tool(description="Retrieve recent executions/fills (current trading day)")
+        async def get_executions(
+            symbol: Annotated[str, "Filter by symbol (empty for all)"] = "",
+        ) -> str:
+            await _ensure_connected()
+            try:
+                # Scope to the configured account when IBKR_ACCOUNT is set.
+                exec_filter = (
+                    ib.ExecutionFilter(acctCode=self.account_filter)
+                    if self.account_filter
+                    else ib.ExecutionFilter()
+                )
+                fills = await self.ib.reqExecutionsAsync(exec_filter)
+                rows = []
+                for f in fills:
+                    ex = getattr(f, "execution", None)
+                    cr = getattr(f, "commissionReport", None)
+                    sym = getattr(getattr(f, "contract", None), "symbol", "")
+                    if symbol and sym.upper() != symbol.upper():
+                        continue
+                    rows.append([
+                        _format_position_value(getattr(ex, "time", "")),
+                        _format_position_value(sym),
+                        _format_position_value(getattr(ex, "side", "")),
+                        _format_position_value(getattr(ex, "shares", "")),
+                        _format_avg_cost(getattr(ex, "price", "")),
+                        _format_position_value(getattr(ex, "cumQty", "")),
+                        _format_avg_cost(getattr(ex, "avgPrice", "")),
+                        _format_avg_cost(getattr(cr, "commission", "")) if cr else "",
+                        _format_avg_cost(getattr(cr, "realizedPNL", "")) if cr else "",
+                        _format_position_value(getattr(ex, "execId", "")),
+                    ])
+                if not rows:
+                    return f"No executions found{f' for {symbol}' if symbol else ''}"
+                headers = ["Time", "Symbol", "Side", "Shares", "Price", "CumQty",
+                           "AvgPrice", "Commission", "RealizedPnL", "ExecId"]
+                return "# Executions\n\n" + _format_markdown_table(headers, rows)
+            except Exception as e:  # pragma: no cover
+                return f"Error getting executions: {e}"
+
+        @self.server.tool(description="Retrieve current open orders (all clients)")
+        async def get_open_orders(
+            account: Annotated[str, "Filter by account (empty for all)"] = "",
+        ) -> str:
+            await _ensure_connected()
+            account = self.account_filter or account
+            try:
+                # reqAllOpenOrders pulls orders placed by other clients/TWS too
+                # (e.g. your TradingView pipeline), then openTrades() gives Trade
+                # objects with status.
+                await self.ib.reqAllOpenOrdersAsync()
+                trades = self.ib.openTrades()
+                rows = []
+                for t in trades:
+                    order = getattr(t, "order", None)
+                    status = getattr(t, "orderStatus", None)
+                    acct = getattr(order, "account", "")
+                    if account and acct != account:
+                        continue
+                    rows.append([
+                        _format_position_value(acct),
+                        _format_position_value(getattr(getattr(t, "contract", None), "symbol", "")),
+                        _format_position_value(getattr(order, "action", "")),
+                        _format_position_value(getattr(order, "orderType", "")),
+                        _format_position_value(getattr(order, "totalQuantity", "")),
+                        _format_avg_cost(getattr(order, "lmtPrice", "")),
+                        _format_avg_cost(getattr(order, "auxPrice", "")),
+                        _format_position_value(getattr(status, "status", "")),
+                        _format_position_value(getattr(status, "filled", "")),
+                        _format_position_value(getattr(status, "remaining", "")),
+                        _format_position_value(getattr(order, "orderId", "")),
+                    ])
+                if not rows:
+                    return f"No open orders found{f' for {account}' if account else ''}"
+                headers = ["Account", "Symbol", "Action", "Type", "Qty", "LmtPrice",
+                           "AuxPrice", "Status", "Filled", "Remaining", "OrderId"]
+                return "# Open Orders\n\n" + _format_markdown_table(headers, rows)
+            except Exception as e:  # pragma: no cover
+                return f"Error getting open orders: {e}"
 
         @self.server.tool(
             description=(
@@ -714,7 +818,6 @@ class IBMCPServer:
 def main() -> None:
     """CLI entry point for running the server."""
     import argparse
-    import os
 
     parser = argparse.ArgumentParser(
         description="Interactive Brokers MCP Server (FastMCP)"
@@ -729,8 +832,8 @@ def main() -> None:
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("IB_PORT", "7497")),
-        help="IB Gateway/TWS port (env: IB_PORT)",
+        default=int(os.getenv("IB_PORT", "4002")),
+        help="IB Gateway/TWS port, default 4002 = paper Gateway (env: IB_PORT)",
     )
     parser.add_argument(
         "--client-id",
